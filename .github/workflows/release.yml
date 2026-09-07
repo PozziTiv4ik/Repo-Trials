@@ -72,3 +72,61 @@ jobs:
             dist/*.whl dist/*.tar.gz dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
+
+      - name: Keep the distributions for the optional PyPI job
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-distributions
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  # Opt-in PyPI publication. Dormant until BOTH of these are done once, by hand:
+  #
+  #   1. https://pypi.org/manage/account/publishing/ -> add a pending publisher
+  #        PyPI project name: repotrials
+  #        Owner:             PozziTiv4ik
+  #        Repository:        Repo-Trials
+  #        Workflow:          release.yml
+  #        Environment:       pypi
+  #   2. Settings -> Secrets and variables -> Actions -> Variables ->
+  #        PUBLISH_TO_PYPI = true
+  #
+  # Until then this job is skipped and the release above behaves exactly as it
+  # does today. Trusted publishing uses short-lived OIDC credentials, so there
+  # is no API token to store or rotate.
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build-and-publish
+    if: vars.PUBLISH_TO_PYPI == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/p/repotrials
+    permissions:
+      id-token: write        # mint the OIDC token trusted publishing exchanges
+      attestations: write    # record build provenance for the published files
+      contents: read
+
+    steps:
+      - name: Download the distributions built from the tag
+        uses: actions/download-artifact@v8
+        with:
+          name: release-distributions
+          path: dist/
+
+      - name: Drop the checksum file
+        shell: bash
+        run: rm -f dist/SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: "dist/*"
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true
+          print-hash: true
